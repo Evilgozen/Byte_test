@@ -74,41 +74,43 @@ class OCRProcessor:
     def __init__(self):
         self.ocr_instance = None
         self.ocr_results_path = "./data/ocr_results"
+        self.ocr_images_path = "./data/ocr_images"  # 新增OCR图片存储路径
         
         # 确保OCR结果存储目录存在
         Path(self.ocr_results_path).mkdir(parents=True, exist_ok=True)
+        Path(self.ocr_images_path).mkdir(parents=True, exist_ok=True)  # 创建OCR图片目录
         
         # 初始化OCR实例
         self.initialize_ocr()
     
     def initialize_ocr(self, use_gpu: bool = False, lang: str = "ch") -> None:
-        """初始化OCR实例 - 优化的PaddleOCR配置"""
+        """初始化OCR实例 - 使用用户推荐的PaddleOCR配置"""
         try:
-            # 先尝试使用新版TextRecognition API
-            try:
-                self.text_recognition = TextRecognition()
-                print("✓ TextRecognition模型初始化成功")
-            except Exception as te:
-                print(f"⚠ TextRecognition初始化失败: {te}")
-                self.text_recognition = None
-            
-            # 使用优化的PaddleOCR配置
+            # 使用用户推荐的PaddleOCR配置参数
             self.ocr_instance = PaddleOCR(
-                use_angle_cls=True, 
-                lang='ch',
-                show_log=False,  # 减少日志输出
-                use_gpu=use_gpu
+                use_doc_orientation_classify=False,  # 不使用文档方向分类模型
+                use_doc_unwarping=False,  # 不使用文本图像矫正模型
+                use_textline_orientation=False,  # 不使用文本行方向分类模型
+                lang=lang,  # 语言设置
+                use_gpu=use_gpu,  # GPU设置
+                show_log=False  # 减少日志输出
             )
-            print("✓ PaddleOCR配置初始化成功")
+            print("✓ PaddleOCR配置初始化成功（使用推荐配置）")
             
         except Exception as e:
             print(f"⚠ OCR初始化失败: {e}")
-            # 最基本的配置
-            self.text_recognition = None
-            self.ocr_instance = PaddleOCR(use_angle_cls=True, lang='ch')
-            print("✓ 使用基础PaddleOCR配置")
+            # 最基本的配置作为备选
+            try:
+                self.ocr_instance = PaddleOCR(
+                    use_angle_cls=True, 
+                    lang=lang
+                )
+                print("✓ 使用基础PaddleOCR配置")
+            except Exception as fallback_e:
+                print(f"⚠ 基础配置也失败: {fallback_e}")
+                raise ValueError(f"OCR初始化完全失败: {fallback_e}")
     
-    def process_frame_ocr(self, frame_path: str, frame_id: int, use_gpu: bool = False, lang: str = "ch") -> dict:
+    def process_frame_ocr(self, frame_path: str, frame_id: int, video_id: int = None, use_gpu: bool = False, lang: str = 'ch', save_raw_result: bool = True) -> dict:
         """对单个帧进行OCR识别"""
         if not self.ocr_instance:
             raise ValueError("OCR实例未初始化")
@@ -130,10 +132,57 @@ class OCRProcessor:
             # 记录处理开始时间
             start_time = time.time()
             
-            # 执行OCR识别 - 使用旧版API（更稳定）
+            # 执行OCR识别 - 使用新版predict API
             print(f"🔍 开始OCR识别: {frame_path}")
-            result = self.ocr_instance.ocr(frame_path)
-            print(f"📝 OCR原始结果: {result}")
+            
+            # 尝试使用新版predict API
+            try:
+                result = self.ocr_instance.predict(frame_path)
+                print(f"📝 OCR原始结果（新版API）: {result}")
+                
+                # 保存OCR处理后的图片
+                if video_id is not None:
+                    ocr_image_dir = Path(f"{self.ocr_images_path}/video_{video_id}")
+                    ocr_image_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    # 保存OCR结果图片（使用指定格式）
+                    for res in result:
+                        # 直接保存为指定格式的文件名
+                        ocr_image_name = f"frame_{frame_id:06d}_333ms_ocr_res_img.jpg"
+                        ocr_image_path = ocr_image_dir / ocr_image_name
+                        res.save_to_img(save_path=str(ocr_image_path))
+                        print(f"✅ OCR图片已保存: {ocr_image_path}")
+                    
+                    # 保存原始OCR结果到JSON文件（如果需要）
+                    if save_raw_result:
+                        raw_result_dir = Path(f"{self.ocr_results_path}/video_{video_id}")
+                        raw_result_dir.mkdir(parents=True, exist_ok=True)
+                        raw_json_name = f"frame_{frame_id:06d}_333ms_ocr_res.json"
+                        raw_result_path = raw_result_dir / raw_json_name
+                        
+                        # 将原始结果转换为可序列化的格式
+                        raw_data = {
+                            "frame_id": frame_id,
+                            "frame_path": frame_path,
+                            "ocr_version": "PP-OCRv5",
+                            "processing_time": round(time.time() - start_time, 3),
+                            "raw_result": self._serialize_ocr_result(result)
+                        }
+                        
+                        with open(raw_result_path, 'w', encoding='utf-8') as f:
+                            json.dump(raw_data, f, ensure_ascii=False, indent=2, default=str)
+                        print(f"✅ 原始OCR结果已保存: {raw_result_path}")
+                else:
+                    print("⚠ 未提供video_id，跳过OCR图片保存")
+                
+                # 转换新版API结果为旧版格式以保持兼容性
+                result = self._convert_new_api_result_to_old_format(result)
+                
+            except Exception as new_api_error:
+                print(f"⚠ 新版API失败，尝试旧版API: {new_api_error}")
+                # 回退到旧版API
+                result = self.ocr_instance.ocr(frame_path)
+                print(f"📝 OCR原始结果（旧版API）: {result}")
             
             # 计算处理时间
             processing_time = time.time() - start_time
@@ -271,34 +320,72 @@ class OCRProcessor:
         except Exception as e:
             raise ValueError(f"OCR处理失败: {str(e)}")
     
-    def _convert_new_api_result(self, output, frame_path: str):
-        """转换新版API结果为旧版格式"""
+    def _convert_new_api_result_to_old_format(self, output):
+        """转换新版predict API结果为旧版ocr格式"""
         try:
-            # 保存OCR处理后的图片和JSON
-            output_dir = Path(f"{self.ocr_results_path}/ocr_output")
-            output_dir.mkdir(parents=True, exist_ok=True)
-            
-            # 保存结果图片和JSON
-            for res in output:
-                res.save_to_img(save_path=str(output_dir))
-                res.save_to_json(save_path=str(output_dir / "result.json"))
-            
-            # 转换为旧版格式 - 这里需要根据新版API的实际输出结构调整
             converted_result = []
+            
             for res in output:
-                # 新版API的结果结构可能不同，这里做基本转换
-                # 具体转换逻辑需要根据实际API输出调整
-                if hasattr(res, 'text') and hasattr(res, 'confidence'):
-                    converted_result.append([
-                        [[0, 0], [100, 0], [100, 30], [0, 30]],  # 默认边界框
-                        [res.text, res.confidence]
-                    ])
+                # 新版API返回的结果对象，需要提取文本和置信度信息
+                if hasattr(res, 'rec_texts') and hasattr(res, 'rec_scores'):
+                    # 如果有rec_texts和rec_scores属性
+                    for text, score in zip(res.rec_texts, res.rec_scores):
+                        if text.strip():  # 只处理非空文本
+                            # 模拟边界框坐标
+                            bbox = [[0, 0], [100, 0], [100, 30], [0, 30]]
+                            converted_result.append([bbox, [text, float(score)]])
+                elif hasattr(res, 'text') and hasattr(res, 'confidence'):
+                    # 如果有text和confidence属性
+                    bbox = [[0, 0], [100, 0], [100, 30], [0, 30]]
+                    converted_result.append([bbox, [res.text, float(res.confidence)]])
+                else:
+                    # 尝试其他可能的属性结构
+                    print(f"⚠ 未知的结果格式: {type(res)}, 属性: {dir(res)}")
             
             return [converted_result] if converted_result else [[]]
             
         except Exception as e:
             print(f"新版API结果转换失败: {e}")
             return [[]]
+    
+    def _convert_new_api_result(self, output, frame_path: str):
+        """转换新版API结果为旧版格式（保留原方法以兼容）"""
+        return self._convert_new_api_result_to_old_format(output)
+    
+    def _serialize_ocr_result(self, result):
+        """将OCR结果序列化为可保存的格式"""
+        try:
+            serialized_result = []
+            
+            for res in result:
+                if hasattr(res, '__dict__'):
+                    # 如果是对象，尝试提取所有属性
+                    res_dict = {}
+                    for attr_name in dir(res):
+                        if not attr_name.startswith('_'):  # 跳过私有属性
+                            try:
+                                attr_value = getattr(res, attr_name)
+                                if not callable(attr_value):  # 跳过方法
+                                    # 处理numpy数组
+                                    if hasattr(attr_value, 'tolist'):
+                                        res_dict[attr_name] = attr_value.tolist()
+                                    else:
+                                        res_dict[attr_name] = attr_value
+                            except Exception:
+                                continue
+                    serialized_result.append(res_dict)
+                else:
+                    # 如果是基本类型或列表，直接处理
+                    if hasattr(res, 'tolist'):
+                        serialized_result.append(res.tolist())
+                    else:
+                        serialized_result.append(res)
+            
+            return serialized_result
+            
+        except Exception as e:
+            print(f"序列化OCR结果失败: {e}")
+            return str(result)  # 回退到字符串表示
     
     def save_ocr_result_to_file(self, video_id: int, frame_number: int, ocr_data: dict) -> str:
         """保存OCR结果到JSON文件"""
@@ -344,7 +431,7 @@ class OCRProcessor:
                     
                     # 处理OCR
                     print(f"🔍 开始处理帧 {frame.id} 的OCR")
-                    ocr_data = self.process_frame_ocr(frame.frame_path, frame.id, request.use_gpu, request.lang)
+                    ocr_data = self.process_frame_ocr(frame.frame_path, frame.id, video_id, request.use_gpu, request.lang, save_raw_result=True)
                     print(f"✅ 帧 {frame.id} OCR处理完成，文本数量: {ocr_data.get('text_count', 0)}")
                     
                     # 保存OCR结果到数据库
@@ -358,8 +445,8 @@ class OCRProcessor:
                     db.add(db_ocr)
                     processed_frames += 1
                     
-                    # 保存OCR结果到JSON文件
-                    self.save_ocr_result_to_file(video_id, frame.frame_number, ocr_data)
+                    # 注释掉普通格式JSON的保存，只保留raw格式
+                    # self.save_ocr_result_to_file(video_id, frame.frame_number, ocr_data)
                     
                     ocr_results.append({
                         "frame_id": frame.id,
@@ -712,36 +799,122 @@ class OCRProcessor:
             
             # 检查JSON文件存储
             ocr_output_dir = Path(f"{self.ocr_results_path}/video_{video_id}")
-            json_files = []
-            total_json_size = 0
-            
+            json_files_count = 0
             if ocr_output_dir.exists():
-                for json_file in ocr_output_dir.glob("*.json"):
-                    file_size = json_file.stat().st_size
-                    json_files.append({
-                        "filename": json_file.name,
-                        "size_bytes": file_size,
-                        "size_kb": round(file_size / 1024, 2)
-                    })
-                    total_json_size += file_size
+                json_files_count = len(list(ocr_output_dir.glob("*.json")))
+            
+            # 检查OCR图片存储
+            ocr_image_dir = Path(f"{self.ocr_images_path}/video_{video_id}")
+            image_files_count = 0
+            if ocr_image_dir.exists():
+                image_files_count = len(list(ocr_image_dir.glob("*.jpg")))
             
             return {
                 "video_id": video_id,
-                "database_info": {
-                    "total_frames": total_frames,
-                    "ocr_records_count": db_ocr_count
-                },
-                "json_storage_info": {
-                    "storage_path": str(ocr_output_dir),
-                    "json_files_count": len(json_files),
-                    "total_size_bytes": total_json_size,
-                    "total_size_kb": round(total_json_size / 1024, 2),
-                    "files": json_files[:10]  # 只显示前10个文件
+                "total_frames": total_frames,
+                "database_ocr_records": db_ocr_count,
+                "json_files_count": json_files_count,
+                "ocr_images_count": image_files_count,
+                "storage_paths": {
+                    "ocr_results": str(ocr_output_dir),
+                    "ocr_images": str(ocr_image_dir)
                 }
             }
             
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"获取OCR存储信息失败: {str(e)}")
+    
+    def get_video_ocr_images(self, video_id: int) -> List[dict]:
+        """获取视频的所有OCR处理后图片列表"""
+        try:
+            ocr_image_dir = Path(f"{self.ocr_images_path}/video_{video_id}")
+            if not ocr_image_dir.exists():
+                return []
+            
+            ocr_images = []
+            for image_file in ocr_image_dir.glob("*.jpg"):
+                # 从文件名提取frame_id
+                filename = image_file.stem  # 去掉扩展名
+                if filename.startswith("frame_") and filename.endswith("_ocr"):
+                    try:
+                        frame_id = int(filename.split("_")[1])
+                        file_stat = image_file.stat()
+                        
+                        ocr_images.append({
+                            "frame_id": frame_id,
+                            "filename": image_file.name,
+                            "file_path": str(image_file),
+                            "file_size": file_stat.st_size,
+                            "created_at": datetime.fromtimestamp(file_stat.st_ctime).isoformat(),
+                            "modified_at": datetime.fromtimestamp(file_stat.st_mtime).isoformat()
+                        })
+                    except (ValueError, IndexError) as e:
+                        print(f"解析OCR图片文件名失败: {filename}, 错误: {e}")
+                        continue
+            
+            # 按frame_id排序
+            ocr_images.sort(key=lambda x: x["frame_id"])
+            return ocr_images
+            
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"获取OCR图片列表失败: {str(e)}")
+    
+    def get_frame_ocr_image_path(self, video_id: int, frame_id: int) -> str:
+        """获取指定帧的OCR图片路径"""
+        ocr_image_path = Path(f"{self.ocr_images_path}/video_{video_id}/frame_{frame_id}_ocr.jpg")
+        if not ocr_image_path.exists():
+            raise HTTPException(status_code=404, detail="OCR图片不存在")
+        return str(ocr_image_path)
+    
+    def delete_video_ocr_images(self, video_id: int) -> dict:
+        """删除视频的所有OCR图片"""
+        try:
+            ocr_image_dir = Path(f"{self.ocr_images_path}/video_{video_id}")
+            deleted_files = 0
+            
+            if ocr_image_dir.exists():
+                for image_file in ocr_image_dir.glob("*.jpg"):
+                    try:
+                        image_file.unlink()
+                        deleted_files += 1
+                    except Exception as e:
+                        print(f"删除OCR图片失败: {image_file}, 错误: {e}")
+                
+                # 如果目录为空，删除目录
+                try:
+                    if not any(ocr_image_dir.iterdir()):
+                        ocr_image_dir.rmdir()
+                except Exception as e:
+                    print(f"删除OCR图片目录失败: {ocr_image_dir}, 错误: {e}")
+            
+            return {
+                "message": "OCR图片删除成功",
+                "video_id": video_id,
+                "deleted_files": deleted_files
+            }
+            
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"删除OCR图片失败: {str(e)}")
+    
+    def delete_frame_ocr_image(self, video_id: int, frame_id: int) -> dict:
+        """删除指定帧的OCR图片"""
+        try:
+            ocr_image_path = Path(f"{self.ocr_images_path}/video_{video_id}/frame_{frame_id}_ocr.jpg")
+            
+            if not ocr_image_path.exists():
+                raise HTTPException(status_code=404, detail="OCR图片不存在")
+            
+            ocr_image_path.unlink()
+            
+            return {
+                "message": "OCR图片删除成功",
+                "video_id": video_id,
+                "frame_id": frame_id,
+                "deleted_file": str(ocr_image_path)
+            }
+            
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"删除OCR图片失败: {str(e)}")
 
 
 # 创建全局OCR处理器实例

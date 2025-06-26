@@ -405,6 +405,64 @@ async def get_ocr_storage_info(video_id: int, db: Session = Depends(get_db)):
     """获取OCR结果的存储信息"""
     return ocr_processor.get_ocr_storage_info(video_id, db)
 
+# 获取视频OCR图片列表API
+@app.get("/videos/{video_id}/ocr-images")
+async def get_video_ocr_images(video_id: int):
+    """获取视频的所有OCR处理后图片列表"""
+    return ocr_processor.get_video_ocr_images(video_id)
+
+# 查看指定帧的OCR图片API
+@app.get("/videos/{video_id}/frames/{frame_id}/ocr-image")
+async def get_frame_ocr_image(video_id: int, frame_id: int):
+    """获取指定帧的OCR处理后图片"""
+    image_path = ocr_processor.get_frame_ocr_image_path(video_id, frame_id)
+    return FileResponse(
+        path=image_path,
+        media_type="image/jpeg",
+        filename=f"video_{video_id}_frame_{frame_id}_ocr.jpg"
+    )
+
+# 删除视频所有OCR图片API
+@app.delete("/videos/{video_id}/ocr-images")
+async def delete_video_ocr_images(video_id: int):
+    """删除视频的所有OCR处理后图片"""
+    return ocr_processor.delete_video_ocr_images(video_id)
+
+# 删除指定帧的OCR图片API
+@app.delete("/videos/{video_id}/frames/{frame_id}/ocr-image")
+async def delete_frame_ocr_image(video_id: int, frame_id: int, db: Session = Depends(get_db)):
+    """删除指定帧的OCR处理后图片"""
+    try:
+        success = ocr_processor.delete_frame_ocr_image(video_id, frame_id)
+        if success:
+            return {"message": f"帧 {frame_id} 的OCR图片删除成功"}
+        else:
+            raise HTTPException(status_code=404, detail="OCR图片不存在")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"删除OCR图片失败: {str(e)}")
+
+@app.get("/videos/{video_id}/frames/{frame_id}/raw-ocr-result")
+async def get_raw_ocr_result(video_id: str, frame_id: str):
+    """获取指定帧的原始OCR结果"""
+    try:
+        # 使用新的文件名格式
+        frame_id_padded = f"{int(frame_id):06d}"
+        raw_result_path = Path(f"./data/ocr_results/video_{video_id}/frame_{frame_id_padded}_333ms_ocr_res.json")
+        
+        if not raw_result_path.exists():
+            raise HTTPException(status_code=404, detail="原始OCR结果文件不存在")
+        
+        with open(raw_result_path, 'r', encoding='utf-8') as f:
+            raw_data = json.load(f)
+        
+        return {
+            "success": True,
+            "data": raw_data
+        }
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取原始OCR结果失败: {str(e)}")
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8000)
