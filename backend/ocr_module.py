@@ -434,10 +434,35 @@ class OCRProcessor:
                     ocr_data = self.process_frame_ocr(frame.frame_path, frame.id, video_id, request.use_gpu, request.lang, save_raw_result=True)
                     print(f"✅ 帧 {frame.id} OCR处理完成，文本数量: {ocr_data.get('text_count', 0)}")
                     
+                    # 从JSON文件中提取rec_texts数组
+                    rec_texts = []
+                    try:
+                        # 读取保存的JSON文件获取rec_texts
+                        json_file_path = f"data/ocr_results/video_{video_id}/frame_{frame.id:06d}_333ms_ocr_res.json"
+                        if os.path.exists(json_file_path):
+                            with open(json_file_path, 'r', encoding='utf-8') as f:
+                                json_data = json.load(f)
+                                if 'raw_result' in json_data and json_data['raw_result']:
+                                    for raw_item in json_data['raw_result']:
+                                        if isinstance(raw_item, dict) and 'json' in raw_item:
+                                            json_res = raw_item['json']
+                                            if isinstance(json_res, dict) and 'res' in json_res:
+                                                res_data = json_res['res']
+                                                if isinstance(res_data, dict) and 'rec_texts' in res_data:
+                                                    rec_texts = res_data['rec_texts']
+                                                    break
+                    except Exception as e:
+                        print(f"读取rec_texts失败: {e}")
+                        rec_texts = []
+                    
+                    # 如果没有找到rec_texts，使用备用方案
+                    if not rec_texts:
+                        rec_texts = [block.get('text', '') for block in ocr_data.get('text_blocks', [])]
+                    
                     # 保存OCR结果到数据库
                     db_ocr = OCRResult(
                         frame_id=frame.id,
-                        text_content=ocr_data["full_text"],
+                        text_content=json.dumps(rec_texts, ensure_ascii=False),  # 存储rec_texts数组
                         confidence=ocr_data["total_confidence"],
                         bbox=json.dumps(ocr_data["text_blocks"], ensure_ascii=False)
                     )
@@ -503,16 +528,53 @@ class OCRProcessor:
         """获取增强的OCR结果（从JSON文件读取）"""
         try:
             enhanced_results = []
-            ocr_results_dir = os.path.join("data", "ocr_results")
+            video_ocr_dir = os.path.join("data", "ocr_results", f"video_{video_id}")
+            
+            # 检查目录是否存在
+            if not os.path.exists(video_ocr_dir):
+                print(f"OCR结果目录不存在: {video_ocr_dir}")
+                return []
             
             # 查找该视频的所有OCR结果文件
-            for filename in os.listdir(ocr_results_dir):
-                if filename.startswith(f"video_{video_id}_frame_") and filename.endswith(".json"):
-                    file_path = os.path.join(ocr_results_dir, filename)
+            for filename in os.listdir(video_ocr_dir):
+                if filename.endswith("_ocr_res.json"):
+                    file_path = os.path.join(video_ocr_dir, filename)
                     try:
                         with open(file_path, 'r', encoding='utf-8') as f:
                             ocr_data = json.load(f)
-                            enhanced_results.append(EnhancedOCRResultResponse(**ocr_data))
+                            
+                            # 手动构建EnhancedOCRResultResponse对象
+                            enhanced_result = EnhancedOCRResultResponse(
+                                frame_id=ocr_data.get('frame_id', 0),
+                                frame_path=ocr_data.get('frame_path', ''),
+                                ocr_version=ocr_data.get('ocr_version', 'PP-OCRv5'),
+                                processing_time=ocr_data.get('processing_time', 0.0),
+                                text_blocks=[],  # 简化处理
+                                full_text='',  # 从raw_result中提取
+                                total_confidence=0.0,  # 从raw_result中计算
+                                text_count=0,  # 从raw_result中计算
+                                language='zh',  # 默认中文
+                                image_info={},  # 简化处理
+                                detection_results=[],  # 简化处理
+                                recognition_results=[]  # 简化处理
+                            )
+                            
+                            # 从raw_result中提取rec_texts
+                            raw_result = ocr_data.get('raw_result', [])
+                            all_texts = []
+                            for result in raw_result:
+                                if isinstance(result, dict) and 'json' in result:
+                                    json_data = result['json']
+                                    if isinstance(json_data, dict) and 'res' in json_data:
+                                        res_data = json_data['res']
+                                        if isinstance(res_data, dict) and 'rec_texts' in res_data:
+                                            all_texts.extend(res_data['rec_texts'])
+                            
+                            enhanced_result.full_text = ' '.join(all_texts)
+                            enhanced_result.text_count = len(all_texts)
+                            
+                            enhanced_results.append(enhanced_result)
+                            
                     except Exception as e:
                         print(f"读取OCR结果文件失败 {filename}: {e}")
                         continue
@@ -895,6 +957,61 @@ class OCRProcessor:
             
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"删除OCR图片失败: {str(e)}")
+    
+    def view_video_ocr_results(self, video_id: int, db: Session) -> dict:
+        """查看视频的OCR结果（包含数据库和JSON文件信息）"""
+        try:
+            # 获取数据库中的OCR结果
+            db_results = self.get_video_ocr_results(video_id, db)
+            
+            # 获取JSON文件中的增强OCR结果
+            json_results = self.get_enhanced_ocr_results(video_id)
+            
+            # 统计信息
+            stats = {
+                "video_id": video_id,
+                "database_records_count": len(db_results),
+                "json_files_count": len(json_results),
+                "data_consistency": len(db_results) == len(json_results)
+            }
+            
+            # 返回完整信息
+            return {
+                "stats": stats,
+                "database_results": [{
+                    "id": result.id,
+                    "frame_id": result.frame_id,
+                    "text_content": self._parse_text_content(result.text_content),
+                    "confidence": float(result.confidence) if result.confidence else None,
+                    "bbox": result.bbox,
+                    "processed_at": result.processed_at.isoformat() if result.processed_at else None
+                } for result in db_results],
+                "json_results": [{
+                    "frame_id": result.frame_id,
+                    "frame_path": result.frame_path,
+                    "ocr_version": result.ocr_version,
+                    "processing_time": result.processing_time,
+                    "text_blocks_count": len(result.text_blocks) if result.text_blocks else 0,
+                    "has_raw_result": result.raw_result is not None
+                } for result in json_results]
+            }
+            
+        except Exception as e:
+            print(f"查看OCR结果失败: {e}")
+            raise HTTPException(status_code=500, detail=f"查看OCR结果失败: {str(e)}")
+    
+    def _parse_text_content(self, text_content: str):
+        """解析数据库中存储的text_content字段"""
+        try:
+            # 尝试解析为JSON数组（新格式）
+            parsed = json.loads(text_content)
+            if isinstance(parsed, list):
+                return parsed  # 返回rec_texts数组
+            else:
+                return text_content  # 返回原始字符串
+        except (json.JSONDecodeError, TypeError):
+            # 如果解析失败，返回原始字符串
+            return text_content
     
     def delete_frame_ocr_image(self, video_id: int, frame_id: int) -> dict:
         """删除指定帧的OCR图片"""

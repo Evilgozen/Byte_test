@@ -405,6 +405,12 @@ async def get_ocr_storage_info(video_id: int, db: Session = Depends(get_db)):
     """获取OCR结果的存储信息"""
     return ocr_processor.get_ocr_storage_info(video_id, db)
 
+# 查看OCR结果API
+@app.get("/videos/{video_id}/ocr-results/view")
+async def view_video_ocr_results(video_id: int, db: Session = Depends(get_db)):
+    """查看视频的OCR结果（包含数据库和JSON文件信息）"""
+    return ocr_processor.view_video_ocr_results(video_id, db)
+
 # 获取视频OCR图片列表API
 @app.get("/videos/{video_id}/ocr-images")
 async def get_video_ocr_images(video_id: int):
