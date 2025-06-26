@@ -13,6 +13,7 @@ from sqlalchemy.orm import sessionmaker, Session
 from models_simple import Base, Project, Video, StageConfig, VideoFrame, ProcessStatus, OCRResult
 from pathlib import Path
 import json
+import os
 from typing import List, Optional
 from pydantic import BaseModel
 from datetime import datetime
