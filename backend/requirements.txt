@@ -1,0 +1,52 @@
+# FastAPI 核心依赖
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+
+# SQLModel 和数据库
+sqlmodel==0.0.8
+sqlalchemy==1.4.48
+alembic==1.12.1
+
+# 视频处理
+opencv-python==4.8.1.78
+opencv-contrib-python==4.8.1.78
+
+# OCR 识别
+paddlepaddle==2.5.2
+paddleocr==2.7.3
+
+# 图像处理
+Pillow==10.1.0
+numpy==1.24.3
+
+# 可视化
+matplotlib==3.7.2
+plotly==5.17.0
+kaleido==0.2.1
+
+# 数据处理
+pandas==2.0.3
+
+# 文件处理
+aiofiles==23.2.1
+python-magic==0.4.27
+
+# 工具库
+pydantic==1.10.12
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-dotenv==1.0.0
+
+# 日志和监控
+loguru==0.7.2
+
+# 测试
+pytest==7.4.3
+pytest-asyncio==0.21.1
+httpx==0.25.2
+
+# 开发工具
+black==23.11.0
+flake8==6.1.0
+isort==5.12.0
