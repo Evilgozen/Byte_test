@@ -21,7 +21,7 @@ from datetime import datetime
 # 导入模块化组件
 from video_module import video_manager, VideoResponse
 from frame_extraction_module import frame_extractor, FrameExtractionRequest, VideoFrameResponse
-from ocr_module import ocr_processor, OCRProcessRequest, OCRResultResponse, KeywordAnalysisRequest
+from ocr_module import ocr_processor, OCRProcessRequest, OCRResultResponse, EnhancedOCRResultResponse, KeywordAnalysisRequest
 
 # 数据库配置
 DATABASE_URL = "sqlite:///./video_analysis.db"
@@ -367,7 +367,13 @@ async def process_video_ocr(video_id: int, request: OCRProcessRequest, db: Sessi
 @app.get("/videos/{video_id}/ocr-results", response_model=List[OCRResultResponse])
 async def get_video_ocr_results(video_id: int, db: Session = Depends(get_db)):
     """获取视频的所有OCR结果"""
-    return await ocr_processor.get_video_ocr_results(video_id, db)
+    return ocr_processor.get_video_ocr_results(video_id, db)
+
+# 获取增强的OCR结果API (PP-OCRv5)
+@app.get("/videos/{video_id}/enhanced-ocr-results", response_model=List[EnhancedOCRResultResponse])
+async def get_enhanced_ocr_results(video_id: int, db: Session = Depends(get_db)):
+    """获取视频的增强OCR结果（PP-OCRv5格式）"""
+    return ocr_processor.get_enhanced_ocr_results(video_id)
 
 # 关键词分析API
 @app.post("/videos/{video_id}/analyze-keywords")
@@ -386,6 +392,18 @@ async def get_frame_ocr_result(frame_id: int, db: Session = Depends(get_db)):
 async def analyze_stage_keywords(video_id: int, db: Session = Depends(get_db)):
     """基于stage_configs分析关键词模式"""
     return await ocr_processor.analyze_stage_keywords(video_id, db)
+
+# 删除OCR结果API
+@app.delete("/videos/{video_id}/ocr-results")
+async def delete_video_ocr_results(video_id: int, db: Session = Depends(get_db)):
+    """删除视频的所有OCR结果（数据库记录和JSON文件）"""
+    return ocr_processor.delete_video_ocr_results(video_id, db)
+
+# 获取OCR存储信息API
+@app.get("/videos/{video_id}/ocr-storage-info")
+async def get_ocr_storage_info(video_id: int, db: Session = Depends(get_db)):
+    """获取OCR结果的存储信息"""
+    return ocr_processor.get_ocr_storage_info(video_id, db)
 
 if __name__ == "__main__":
     import uvicorn

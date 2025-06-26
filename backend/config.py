@@ -7,7 +7,7 @@
 import os
 from pathlib import Path
 from typing import Optional
-from pydantic import BaseSettings
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
@@ -104,14 +104,19 @@ class VideoProcessingConfig:
 class OCRConfig:
     """OCR配置"""
     
-    # PaddleOCR设置
+    # PaddleOCR设置 - 支持PP-OCRv5
     PADDLE_OCR_SETTINGS = {
         "use_doc_orientation_classify": False,
         "use_doc_unwarping": False,
         "use_textline_orientation": False,
         "lang": "ch",
         "device": "cpu",  # 或 "gpu"
-        "show_log": False
+        "show_log": False,
+        # PP-OCRv5 模型配置
+        "ocr_version": "PP-OCRv5",
+        "det_model_name": "PP-OCRv5_server_det",
+        "rec_model_name": "PP-OCRv5_server_rec",
+        "cls_model_name": "PP-LCNet_x1_0_doc_ori"
     }
     
     # 文本处理设置

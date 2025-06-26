@@ -12,8 +12,11 @@ from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 from datetime import datetime
 from paddleocr import PaddleOCR
+from config import OCRConfig
 import json
 import os
+import time
+import cv2
 
 
 class OCRProcessRequest(BaseModel):
@@ -26,8 +29,27 @@ class OCRResultResponse(BaseModel):
     frame_id: int
     text_content: Optional[str]
     confidence: Optional[float]
-    bbox: Optional[dict]
+    bbox: Optional[str]  # Store as JSON string to avoid serialization issues
     processed_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class EnhancedOCRResultResponse(BaseModel):
+    """增强的OCR结果响应模型 - 支持PP-OCRv5"""
+    frame_id: int
+    frame_path: str
+    ocr_version: str
+    processing_time: float
+    text_blocks: List[Dict[str, Any]]
+    full_text: str
+    total_confidence: float
+    text_count: int
+    language: str
+    image_info: Dict[str, Any]
+    detection_results: List[Dict[str, Any]]
+    recognition_results: List[Dict[str, Any]]
     
     class Config:
         from_attributes = True
@@ -60,19 +82,24 @@ class OCRProcessor:
         self.initialize_ocr()
     
     def initialize_ocr(self, use_gpu: bool = False, lang: str = "ch") -> None:
-        """初始化OCR实例"""
+        """初始化OCR实例 - 支持PP-OCRv5"""
         try:
-            self.ocr_instance = PaddleOCR(
-                use_doc_orientation_classify=False,
-                use_doc_unwarping=False,
-                use_textline_orientation=False,
-                lang=lang,
-                use_gpu=use_gpu
-            )
-            print(f"✓ PaddleOCR初始化完成 (GPU: {use_gpu}, 语言: {lang})")
+            # 尝试使用PP-OCRv5配置
+            ocr_settings = OCRConfig.PADDLE_OCR_SETTINGS.copy()
+            
+            # 移除可能不支持的参数
+            unsupported_params = ['ocr_version', 'det_model_name', 'rec_model_name', 'cls_model_name']
+            for param in unsupported_params:
+                ocr_settings.pop(param, None)
+            
+            self.ocr_instance = PaddleOCR(**ocr_settings)
+            print(f"✓ PaddleOCR初始化成功，使用配置: {ocr_settings}")
+            
         except Exception as e:
             print(f"⚠ PaddleOCR初始化失败: {e}")
-            self.ocr_instance = None
+            # 回退到默认配置
+            self.ocr_instance = PaddleOCR(use_angle_cls=True, lang='ch')
+            print("✓ 使用默认PaddleOCR配置")
     
     def process_frame_ocr(self, frame_path: str, frame_id: int, use_gpu: bool = False, lang: str = "ch") -> dict:
         """对单个帧进行OCR识别"""
@@ -83,23 +110,48 @@ class OCRProcessor:
             raise ValueError(f"帧图片文件不存在: {frame_path}")
         
         try:
+            # 获取图像信息
+            image = cv2.imread(frame_path)
+            image_height, image_width = image.shape[:2] if image is not None else (None, None)
+            image_channels = image.shape[2] if image is not None and len(image.shape) > 2 else None
+            
+            # 记录处理开始时间
+            start_time = time.time()
+            
             # 执行OCR识别
             result = self.ocr_instance.ocr(frame_path, cls=True)
             
-            # 处理OCR结果
+            # 计算处理时间
+            processing_time = time.time() - start_time
+            
+            # 处理OCR结果 - 增强的JSON结构
             ocr_data = {
                 "frame_id": frame_id,
+                "frame_path": frame_path,
+                "ocr_version": "PP-OCRv5",
+                "processing_time": round(processing_time, 3),
                 "text_blocks": [],
                 "full_text": "",
-                "total_confidence": 0.0
+                "total_confidence": 0.0,
+                "text_count": 0,
+                "language": lang,
+                "image_info": {
+                    "width": image_width,
+                    "height": image_height,
+                    "channels": image_channels
+                },
+                "detection_results": [],
+                "recognition_results": []
             }
             
             if result and result[0]:
                 text_blocks = []
                 confidences = []
                 full_text_parts = []
+                detection_results = []
+                recognition_results = []
                 
-                for line in result[0]:
+                for idx, line in enumerate(result[0]):
                     if len(line) >= 2:
                         bbox = line[0]  # 边界框坐标
                         text_info = line[1]  # 文本和置信度
@@ -108,19 +160,49 @@ class OCRProcessor:
                             text = text_info[0]
                             confidence = float(text_info[1])
                             
+                            # 详细的文本块信息
                             text_block = {
+                                "id": idx,
                                 "text": text,
                                 "confidence": confidence,
-                                "bbox": bbox
+                                "bbox": bbox,
+                                "bbox_normalized": {
+                                    "x1": min([point[0] for point in bbox]),
+                                    "y1": min([point[1] for point in bbox]),
+                                    "x2": max([point[0] for point in bbox]),
+                                    "y2": max([point[1] for point in bbox])
+                                },
+                                "text_length": len(text),
+                                "word_count": len(text.split()) if text.strip() else 0
+                            }
+                            
+                            # 检测结果
+                            detection_result = {
+                                "id": idx,
+                                "bbox": bbox,
+                                "confidence": confidence
+                            }
+                            
+                            # 识别结果
+                            recognition_result = {
+                                "id": idx,
+                                "text": text,
+                                "confidence": confidence,
+                                "char_confidences": []  # 可以扩展为字符级置信度
                             }
                             
                             text_blocks.append(text_block)
+                            detection_results.append(detection_result)
+                            recognition_results.append(recognition_result)
                             confidences.append(confidence)
                             full_text_parts.append(text)
                 
                 ocr_data["text_blocks"] = text_blocks
+                ocr_data["detection_results"] = detection_results
+                ocr_data["recognition_results"] = recognition_results
                 ocr_data["full_text"] = " ".join(full_text_parts)
                 ocr_data["total_confidence"] = sum(confidences) / len(confidences) if confidences else 0.0
+                ocr_data["text_count"] = len(text_blocks)
             
             return ocr_data
             
@@ -233,6 +315,32 @@ class OCRProcessor:
         ).order_by(VideoFrame.timestamp_ms).all()
         
         return ocr_results
+    
+    def get_enhanced_ocr_results(self, video_id: int) -> List[EnhancedOCRResultResponse]:
+        """获取增强的OCR结果（从JSON文件读取）"""
+        try:
+            enhanced_results = []
+            ocr_results_dir = os.path.join("data", "ocr_results")
+            
+            # 查找该视频的所有OCR结果文件
+            for filename in os.listdir(ocr_results_dir):
+                if filename.startswith(f"video_{video_id}_frame_") and filename.endswith(".json"):
+                    file_path = os.path.join(ocr_results_dir, filename)
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            ocr_data = json.load(f)
+                            enhanced_results.append(EnhancedOCRResultResponse(**ocr_data))
+                    except Exception as e:
+                        print(f"读取OCR结果文件失败 {filename}: {e}")
+                        continue
+            
+            # 按frame_id排序
+            enhanced_results.sort(key=lambda x: x.frame_id)
+            return enhanced_results
+            
+        except Exception as e:
+            print(f"获取增强OCR结果失败: {e}")
+            raise HTTPException(status_code=500, detail="获取增强OCR结果失败")
     
     def get_frame_ocr_result(self, frame_id: int, db: Session) -> OCRResult:
         """获取指定帧的OCR结果"""
@@ -435,6 +543,109 @@ class OCRProcessor:
             
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"关键词分析失败: {str(e)}")
+    
+    def delete_video_ocr_results(self, video_id: int, db: Session) -> dict:
+        """删除视频的所有OCR结果（数据库记录和JSON文件）"""
+        try:
+            # 检查视频是否存在
+            video = db.query(Video).filter(Video.id == video_id).first()
+            if not video:
+                raise HTTPException(status_code=404, detail="视频不存在")
+            
+            # 获取视频的所有帧
+            frames = db.query(VideoFrame).filter(VideoFrame.video_id == video_id).all()
+            
+            deleted_db_records = 0
+            deleted_json_files = 0
+            
+            # 删除数据库中的OCR记录
+            for frame in frames:
+                ocr_results = db.query(OCRResult).filter(OCRResult.frame_id == frame.id).all()
+                for ocr_result in ocr_results:
+                    db.delete(ocr_result)
+                    deleted_db_records += 1
+            
+            # 提交数据库更改
+            db.commit()
+            
+            # 删除JSON文件
+            ocr_output_dir = Path(f"{self.ocr_results_path}/video_{video_id}")
+            if ocr_output_dir.exists():
+                import shutil
+                for json_file in ocr_output_dir.glob("*.json"):
+                    try:
+                        json_file.unlink()
+                        deleted_json_files += 1
+                    except Exception as e:
+                        print(f"删除JSON文件失败: {json_file}, 错误: {e}")
+                
+                # 如果目录为空，删除目录
+                try:
+                    if not any(ocr_output_dir.iterdir()):
+                        ocr_output_dir.rmdir()
+                except Exception as e:
+                    print(f"删除目录失败: {ocr_output_dir}, 错误: {e}")
+            
+            return {
+                "message": "OCR结果删除成功",
+                "video_id": video_id,
+                "deleted_db_records": deleted_db_records,
+                "deleted_json_files": deleted_json_files
+            }
+            
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(status_code=500, detail=f"删除OCR结果失败: {str(e)}")
+    
+    def get_ocr_storage_info(self, video_id: int, db: Session) -> dict:
+        """获取OCR结果的存储信息"""
+        try:
+            # 检查视频是否存在
+            video = db.query(Video).filter(Video.id == video_id).first()
+            if not video:
+                raise HTTPException(status_code=404, detail="视频不存在")
+            
+            # 统计数据库中的OCR记录
+            frames = db.query(VideoFrame).filter(VideoFrame.video_id == video_id).all()
+            total_frames = len(frames)
+            
+            db_ocr_count = 0
+            for frame in frames:
+                ocr_count = db.query(OCRResult).filter(OCRResult.frame_id == frame.id).count()
+                db_ocr_count += ocr_count
+            
+            # 检查JSON文件存储
+            ocr_output_dir = Path(f"{self.ocr_results_path}/video_{video_id}")
+            json_files = []
+            total_json_size = 0
+            
+            if ocr_output_dir.exists():
+                for json_file in ocr_output_dir.glob("*.json"):
+                    file_size = json_file.stat().st_size
+                    json_files.append({
+                        "filename": json_file.name,
+                        "size_bytes": file_size,
+                        "size_kb": round(file_size / 1024, 2)
+                    })
+                    total_json_size += file_size
+            
+            return {
+                "video_id": video_id,
+                "database_info": {
+                    "total_frames": total_frames,
+                    "ocr_records_count": db_ocr_count
+                },
+                "json_storage_info": {
+                    "storage_path": str(ocr_output_dir),
+                    "json_files_count": len(json_files),
+                    "total_size_bytes": total_json_size,
+                    "total_size_kb": round(total_json_size / 1024, 2),
+                    "files": json_files[:10]  # 只显示前10个文件
+                }
+            }
+            
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"获取OCR存储信息失败: {str(e)}")
 
 
 # 创建全局OCR处理器实例
