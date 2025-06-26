@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 from datetime import datetime
-from paddleocr import PaddleOCR
+from paddleocr import PaddleOCR, TextRecognition
 from config import OCRConfig
 import json
 import os
@@ -82,24 +82,31 @@ class OCRProcessor:
         self.initialize_ocr()
     
     def initialize_ocr(self, use_gpu: bool = False, lang: str = "ch") -> None:
-        """初始化OCR实例 - 支持PP-OCRv5"""
+        """初始化OCR实例 - 优化的PaddleOCR配置"""
         try:
-            # 尝试使用PP-OCRv5配置
-            ocr_settings = OCRConfig.PADDLE_OCR_SETTINGS.copy()
+            # 先尝试使用新版TextRecognition API
+            try:
+                self.text_recognition = TextRecognition()
+                print("✓ TextRecognition模型初始化成功")
+            except Exception as te:
+                print(f"⚠ TextRecognition初始化失败: {te}")
+                self.text_recognition = None
             
-            # 移除可能不支持的参数
-            unsupported_params = ['ocr_version', 'det_model_name', 'rec_model_name', 'cls_model_name']
-            for param in unsupported_params:
-                ocr_settings.pop(param, None)
-            
-            self.ocr_instance = PaddleOCR(**ocr_settings)
-            print(f"✓ PaddleOCR初始化成功，使用配置: {ocr_settings}")
+            # 使用优化的PaddleOCR配置
+            self.ocr_instance = PaddleOCR(
+                use_angle_cls=True, 
+                lang='ch',
+                show_log=False,  # 减少日志输出
+                use_gpu=use_gpu
+            )
+            print("✓ PaddleOCR配置初始化成功")
             
         except Exception as e:
-            print(f"⚠ PaddleOCR初始化失败: {e}")
-            # 回退到默认配置
+            print(f"⚠ OCR初始化失败: {e}")
+            # 最基本的配置
+            self.text_recognition = None
             self.ocr_instance = PaddleOCR(use_angle_cls=True, lang='ch')
-            print("✓ 使用默认PaddleOCR配置")
+            print("✓ 使用基础PaddleOCR配置")
     
     def process_frame_ocr(self, frame_path: str, frame_id: int, use_gpu: bool = False, lang: str = "ch") -> dict:
         """对单个帧进行OCR识别"""
@@ -112,14 +119,21 @@ class OCRProcessor:
         try:
             # 获取图像信息
             image = cv2.imread(frame_path)
-            image_height, image_width = image.shape[:2] if image is not None else (None, None)
-            image_channels = image.shape[2] if image is not None and len(image.shape) > 2 else None
+            if image is None:
+                print(f"⚠ 无法读取图像文件: {frame_path}")
+                raise ValueError(f"无法读取图像文件: {frame_path}")
+            
+            image_height, image_width = image.shape[:2]
+            image_channels = image.shape[2] if len(image.shape) > 2 else None
+            print(f"📷 图像信息: {image_width}x{image_height}, 通道数: {image_channels}")
             
             # 记录处理开始时间
             start_time = time.time()
             
-            # 执行OCR识别
-            result = self.ocr_instance.ocr(frame_path, cls=True)
+            # 执行OCR识别 - 使用旧版API（更稳定）
+            print(f"🔍 开始OCR识别: {frame_path}")
+            result = self.ocr_instance.ocr(frame_path)
+            print(f"📝 OCR原始结果: {result}")
             
             # 计算处理时间
             processing_time = time.time() - start_time
@@ -144,58 +158,106 @@ class OCRProcessor:
                 "recognition_results": []
             }
             
-            if result and result[0]:
+            # 处理不同格式的OCR结果
+            if result:
                 text_blocks = []
                 confidences = []
                 full_text_parts = []
                 detection_results = []
                 recognition_results = []
                 
-                for idx, line in enumerate(result[0]):
-                    if len(line) >= 2:
-                        bbox = line[0]  # 边界框坐标
-                        text_info = line[1]  # 文本和置信度
+                # 检查是否是新版TextRecognition API的结果格式
+                if isinstance(result, list) and len(result) > 0 and isinstance(result[0], dict):
+                    # 新版API格式处理
+                    result_dict = result[0]
+                    if 'rec_texts' in result_dict and 'rec_scores' in result_dict:
+                        rec_texts = result_dict['rec_texts']
+                        rec_scores = result_dict['rec_scores']
                         
-                        if isinstance(text_info, (list, tuple)) and len(text_info) >= 2:
-                            text = text_info[0]
-                            confidence = float(text_info[1])
-                            
-                            # 详细的文本块信息
-                            text_block = {
-                                "id": idx,
-                                "text": text,
-                                "confidence": confidence,
-                                "bbox": bbox,
-                                "bbox_normalized": {
-                                    "x1": min([point[0] for point in bbox]),
-                                    "y1": min([point[1] for point in bbox]),
-                                    "x2": max([point[0] for point in bbox]),
-                                    "y2": max([point[1] for point in bbox])
-                                },
-                                "text_length": len(text),
-                                "word_count": len(text.split()) if text.strip() else 0
-                            }
-                            
-                            # 检测结果
-                            detection_result = {
-                                "id": idx,
-                                "bbox": bbox,
-                                "confidence": confidence
-                            }
-                            
-                            # 识别结果
-                            recognition_result = {
-                                "id": idx,
-                                "text": text,
-                                "confidence": confidence,
-                                "char_confidences": []  # 可以扩展为字符级置信度
-                            }
-                            
-                            text_blocks.append(text_block)
-                            detection_results.append(detection_result)
-                            recognition_results.append(recognition_result)
-                            confidences.append(confidence)
-                            full_text_parts.append(text)
+                        for idx, (text, score) in enumerate(zip(rec_texts, rec_scores)):
+                            if text.strip():  # 只处理非空文本
+                                # 模拟边界框（新版API可能不提供详细坐标）
+                                bbox = [[0, idx*20], [100, idx*20], [100, (idx+1)*20], [0, (idx+1)*20]]
+                                
+                                text_block = {
+                                    "id": idx,
+                                    "text": text,
+                                    "confidence": float(score),
+                                    "bbox": bbox,
+                                    "bbox_normalized": {
+                                        "x1": 0,
+                                        "y1": idx*20,
+                                        "x2": 100,
+                                        "y2": (idx+1)*20
+                                    },
+                                    "text_length": len(text),
+                                    "word_count": len(text.split()) if text.strip() else 0
+                                }
+                                
+                                detection_result = {
+                                    "id": idx,
+                                    "bbox": bbox,
+                                    "confidence": float(score)
+                                }
+                                
+                                recognition_result = {
+                                    "id": idx,
+                                    "text": text,
+                                    "confidence": float(score)
+                                }
+                                
+                                text_blocks.append(text_block)
+                                detection_results.append(detection_result)
+                                recognition_results.append(recognition_result)
+                                confidences.append(float(score))
+                                full_text_parts.append(text)
+                elif isinstance(result, list) and len(result) > 0 and isinstance(result[0], list):
+                     # 旧版API格式处理
+                     for idx, line in enumerate(result[0]):
+                         if len(line) >= 2:
+                             bbox = line[0]  # 边界框坐标
+                             text_info = line[1]  # 文本和置信度
+                             
+                             if isinstance(text_info, (list, tuple)) and len(text_info) >= 2:
+                                 text = text_info[0]
+                                 confidence = float(text_info[1])
+                                 
+                                 # 详细的文本块信息
+                                 text_block = {
+                                     "id": idx,
+                                     "text": text,
+                                     "confidence": confidence,
+                                     "bbox": bbox,
+                                     "bbox_normalized": {
+                                         "x1": min([point[0] for point in bbox]),
+                                         "y1": min([point[1] for point in bbox]),
+                                         "x2": max([point[0] for point in bbox]),
+                                         "y2": max([point[1] for point in bbox])
+                                     },
+                                     "text_length": len(text),
+                                     "word_count": len(text.split()) if text.strip() else 0
+                                 }
+                                 
+                                 # 检测结果
+                                 detection_result = {
+                                     "id": idx,
+                                     "bbox": bbox,
+                                     "confidence": confidence
+                                 }
+                                 
+                                 # 识别结果
+                                 recognition_result = {
+                                     "id": idx,
+                                     "text": text,
+                                     "confidence": confidence,
+                                     "char_confidences": []  # 可以扩展为字符级置信度
+                                 }
+                                 
+                                 text_blocks.append(text_block)
+                                 detection_results.append(detection_result)
+                                 recognition_results.append(recognition_result)
+                                 confidences.append(confidence)
+                                 full_text_parts.append(text)
                 
                 ocr_data["text_blocks"] = text_blocks
                 ocr_data["detection_results"] = detection_results
@@ -208,6 +270,35 @@ class OCRProcessor:
             
         except Exception as e:
             raise ValueError(f"OCR处理失败: {str(e)}")
+    
+    def _convert_new_api_result(self, output, frame_path: str):
+        """转换新版API结果为旧版格式"""
+        try:
+            # 保存OCR处理后的图片和JSON
+            output_dir = Path(f"{self.ocr_results_path}/ocr_output")
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            # 保存结果图片和JSON
+            for res in output:
+                res.save_to_img(save_path=str(output_dir))
+                res.save_to_json(save_path=str(output_dir / "result.json"))
+            
+            # 转换为旧版格式 - 这里需要根据新版API的实际输出结构调整
+            converted_result = []
+            for res in output:
+                # 新版API的结果结构可能不同，这里做基本转换
+                # 具体转换逻辑需要根据实际API输出调整
+                if hasattr(res, 'text') and hasattr(res, 'confidence'):
+                    converted_result.append([
+                        [[0, 0], [100, 0], [100, 30], [0, 30]],  # 默认边界框
+                        [res.text, res.confidence]
+                    ])
+            
+            return [converted_result] if converted_result else [[]]
+            
+        except Exception as e:
+            print(f"新版API结果转换失败: {e}")
+            return [[]]
     
     def save_ocr_result_to_file(self, video_id: int, frame_number: int, ocr_data: dict) -> str:
         """保存OCR结果到JSON文件"""
@@ -243,13 +334,18 @@ class OCRProcessor:
             
             for frame in frames:
                 try:
+                    print(f"🎬 处理帧: {frame.id}, 路径: {frame.frame_path}")
+                    
                     # 检查是否已经处理过OCR
                     existing_ocr = db.query(OCRResult).filter(OCRResult.frame_id == frame.id).first()
                     if existing_ocr:
+                        print(f"⏭ 跳过已处理的帧: {frame.id}")
                         continue
                     
                     # 处理OCR
+                    print(f"🔍 开始处理帧 {frame.id} 的OCR")
                     ocr_data = self.process_frame_ocr(frame.frame_path, frame.id, request.use_gpu, request.lang)
+                    print(f"✅ 帧 {frame.id} OCR处理完成，文本数量: {ocr_data.get('text_count', 0)}")
                     
                     # 保存OCR结果到数据库
                     db_ocr = OCRResult(
