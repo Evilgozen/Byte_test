@@ -22,6 +22,7 @@ from datetime import datetime
 from video_module import video_manager, VideoResponse
 from frame_extraction_module import frame_extractor, FrameExtractionRequest, VideoFrameResponse
 from ocr_module import ocr_processor, OCRProcessRequest, OCRResultResponse, EnhancedOCRResultResponse, KeywordAnalysisRequest
+from keyword_pattern_module import keyword_pattern_analyzer, KeywordPatternRequest, StagePatternRequest
 
 # 数据库配置
 DATABASE_URL = "sqlite:///./video_analysis.db"
@@ -100,6 +101,22 @@ class StageConfigResponse(BaseModel):
 # - KeywordAnalysisRequest 在 ocr_module 中
     
 # KeywordAnalysisResponse 也在 ocr_module 中定义
+
+class FrameInfo(BaseModel):
+    """帧信息模型"""
+    frame_number: int
+    timestamp_ms: int
+    file_size: int
+
+class FrameExtractionResponse(BaseModel):
+    """视频分帧响应模型"""
+    message: str
+    video_id: int
+    total_frames: int
+    frames: List[FrameInfo]
+    
+    class Config:
+        from_attributes = True
 
 # 启动事件
 @app.on_event("startup")
@@ -237,6 +254,38 @@ async def get_video_stage_configs(video_id: int, db: Session = Depends(get_db)):
     
     return response_configs
 
+@app.delete("/stage-configs/{config_id}")
+async def delete_stage_config(config_id: int, db: Session = Depends(get_db)):
+    """删除阶段配置"""
+    # 查找阶段配置
+    config = db.query(StageConfig).filter(StageConfig.id == config_id).first()
+    if not config:
+        raise HTTPException(status_code=404, detail="阶段配置不存在")
+    
+    # 删除相关的分析结果（由于设置了CASCADE，会自动删除）
+    db.delete(config)
+    db.commit()
+    
+    return {"message": "阶段配置删除成功", "config_id": config_id}
+
+@app.delete("/videos/{video_id}/stage-configs/")
+async def delete_all_video_stage_configs(video_id: int, db: Session = Depends(get_db)):
+    """删除视频的所有阶段配置"""
+    # 检查视频是否存在
+    video = db.query(Video).filter(Video.id == video_id).first()
+    if not video:
+        raise HTTPException(status_code=404, detail="视频不存在")
+    
+    # 删除该视频的所有阶段配置
+    deleted_count = db.query(StageConfig).filter(StageConfig.video_id == video_id).delete()
+    db.commit()
+    
+    return {
+        "message": f"成功删除视频 {video_id} 的所有阶段配置",
+        "video_id": video_id,
+        "deleted_count": deleted_count
+    }
+
 # 系统信息
 @app.get("/system/info")
 async def get_system_info(db: Session = Depends(get_db)):
@@ -281,10 +330,10 @@ async def get_system_info(db: Session = Depends(get_db)):
 # OCR处理函数和关键词分析函数已移至 ocr_module
 
 # 视频分帧API
-@app.post("/videos/{video_id}/extract-frames", response_model=List[VideoFrameResponse])
+@app.post("/videos/{video_id}/extract-frames", response_model=FrameExtractionResponse)
 async def extract_frames(video_id: int, request: FrameExtractionRequest, db: Session = Depends(get_db)):
     """提取视频帧"""
-    return await frame_extractor.extract_frames(video_id, request, db)
+    return await frame_extractor.extract_frames_from_video(video_id, request, db)
 
 # 获取视频帧列表
 @app.get("/videos/{video_id}/frames", response_model=List[VideoFrameResponse])
@@ -468,6 +517,48 @@ async def get_raw_ocr_result(video_id: str, frame_id: str):
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取原始OCR结果失败: {str(e)}")
+
+# 关键词模式匹配API
+@app.post("/videos/{video_id}/analyze-keyword-pattern")
+async def analyze_keyword_pattern(video_id: int, request: KeywordPatternRequest, db: Session = Depends(get_db)):
+    """分析视频中关键词的模式，返回第一次出现和消失的时间戳"""
+    return keyword_pattern_analyzer.analyze_keyword_pattern(video_id, request, db)
+
+@app.post("/videos/{video_id}/analyze-stage-pattern")
+async def analyze_stage_pattern(video_id: int, request: StagePatternRequest, db: Session = Depends(get_db)):
+    """基于阶段配置分析关键词模式，返回每个阶段的时间戳信息"""
+    return keyword_pattern_analyzer.analyze_stage_pattern(video_id, request, db)
+
+@app.get("/videos/{video_id}/stage-pattern-summary")
+async def get_stage_pattern_summary(video_id: int, db: Session = Depends(get_db)):
+    """获取视频所有阶段的关键词模式摘要"""
+    request = StagePatternRequest(confidence_threshold=0.0, include_pattern_details=False)
+    result = keyword_pattern_analyzer.analyze_stage_pattern(video_id, request, db)
+    
+    # 返回简化的摘要信息
+    summary = {
+        "video_id": video_id,
+        "total_stages": result["total_stages"],
+        "analysis_timestamp": result["analysis_timestamp"],
+        "stage_summaries": []
+    }
+    
+    for stage in result["stage_results"]:
+        stage_summary = {
+            "stage_id": stage["stage_id"],
+            "stage_name": stage["stage_name"],
+            "stage_order": stage["stage_order"],
+            "keywords": stage["keywords"],
+            "stage_start_timestamp_ms": stage["stage_start_timestamp_ms"],
+            "stage_end_timestamp_ms": stage["stage_end_timestamp_ms"],
+            "stage_duration_ms": stage["stage_duration_ms"],
+            "keywords_found": stage["pattern_summary"]["keywords_found"],
+            "total_occurrences": stage["pattern_summary"]["total_occurrences"]
+        }
+        summary["stage_summaries"].append(stage_summary)
+    
+    summary["overall_summary"] = result["overall_summary"]
+    return summary
 
 if __name__ == "__main__":
     import uvicorn

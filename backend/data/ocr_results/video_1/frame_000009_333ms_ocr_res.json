@@ -2,12 +2,12 @@
   "frame_id": 9,
   "frame_path": "data\\frames\\video_1\\frame_000008_1333ms.jpg",
   "ocr_version": "PP-OCRv5",
-  "processing_time": 0.737,
+  "processing_time": 0.843,
   "raw_result": [
     {
       "img": {
-        "ocr_res_img": "<PIL.Image.Image image mode=RGB size=1152x1280 at 0x15E81D1FE10>",
-        "preprocessed_img": "<PIL.Image.Image image mode=RGB size=1728x1305 at 0x15E81BFE2D0>"
+        "ocr_res_img": "<PIL.Image.Image image mode=RGB size=1152x1280 at 0x229E4B8ED90>",
+        "preprocessed_img": "<PIL.Image.Image image mode=RGB size=1728x1305 at 0x229E4B8DD90>"
       },
       "json": {
         "res": {

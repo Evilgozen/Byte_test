@@ -50,6 +50,7 @@ class EnhancedOCRResultResponse(BaseModel):
     image_info: Dict[str, Any]
     detection_results: List[Dict[str, Any]]
     recognition_results: List[Dict[str, Any]]
+    raw_result: Optional[List[Dict[str, Any]]] = None
     
     class Config:
         from_attributes = True
@@ -556,7 +557,8 @@ class OCRProcessor:
                                 language='zh',  # 默认中文
                                 image_info={},  # 简化处理
                                 detection_results=[],  # 简化处理
-                                recognition_results=[]  # 简化处理
+                                recognition_results=[],  # 简化处理
+                                raw_result=ocr_data.get('raw_result', [])
                             )
                             
                             # 从raw_result中提取rec_texts

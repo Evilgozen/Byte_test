@@ -115,6 +115,59 @@ export const stageConfigApi = {
   }
 }
 
+// OCR处理API
+export const ocrApi = {
+  // 处理视频OCR
+  processVideoOCR(videoId, params) {
+    return api.post(`/videos/${videoId}/process-ocr`, params)
+  },
+  
+  // 获取视频OCR结果
+  getVideoOCRResults(videoId) {
+    return api.get(`/videos/${videoId}/ocr-results`)
+  },
+  
+  // 获取增强OCR结果
+  getEnhancedOCRResults(videoId) {
+    return api.get(`/videos/${videoId}/enhanced-ocr-results`)
+  },
+  
+  // 查看OCR结果
+  viewOCRResults(videoId) {
+    return api.get(`/videos/${videoId}/ocr-results/view`)
+  },
+  
+  // 删除视频OCR结果
+  deleteVideoOCRResults(videoId) {
+    return api.delete(`/videos/${videoId}/ocr-results`)
+  },
+  
+  // 获取OCR存储信息
+  getOCRStorageInfo(videoId) {
+    return api.get(`/videos/${videoId}/ocr-storage-info`)
+  },
+  
+  // 获取OCR图片列表
+  getOCRImages(videoId) {
+    return api.get(`/videos/${videoId}/ocr-images`)
+  },
+  
+  // 获取帧OCR结果
+  getFrameOCRResult(frameId) {
+    return api.get(`/frames/${frameId}/ocr-result`)
+  },
+  
+  // 分析视频关键词
+  analyzeVideoKeywords(videoId, keywords) {
+    return api.post(`/videos/${videoId}/analyze-keywords`, { keywords })
+  },
+  
+  // 分析阶段关键词
+  analyzeStageKeywords(videoId) {
+    return api.post(`/videos/${videoId}/analyze-stage-keywords`)
+  }
+}
+
 // 系统信息API
 export const systemApi = {
   // 获取系统信息

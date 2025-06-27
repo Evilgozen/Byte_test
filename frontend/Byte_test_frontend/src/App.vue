@@ -159,6 +159,7 @@ html, body, #app {
   left: 0;
   top: 0;
   z-index: 100;
+  width: 200px;
 }
 
 .app-sider .logo {
@@ -209,6 +210,7 @@ html, body, #app {
   min-height: calc(100vh - 64px - 70px);
   background-color: #f0f2f5;
   padding: 0;
+  margin-left: 200px;
 }
 
 .app-footer {
@@ -249,6 +251,10 @@ html, body, #app {
   .app-sider {
     position: fixed;
     z-index: 1000;
+  }
+  
+  .app-content {
+    margin-left: 0;
   }
   
   .header-right .ant-breadcrumb {

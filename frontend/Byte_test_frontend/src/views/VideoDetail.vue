@@ -23,7 +23,174 @@
       </template>
     </a-page-header>
 
+    <!-- OCR功能模块 -->
+    <a-card title="OCR文字识别" class="ocr-card" style="margin-bottom: 16px;">
+      <template #extra>
+        <a-space>
+          <a-tag v-if="ocrStats.database_records_count > 0" color="green">
+            已识别 {{ ocrStats.database_records_count }} 帧
+          </a-tag>
+          <a-button 
+            type="primary" 
+            @click="startOCRProcessing" 
+            :loading="ocrProcessing"
+            :disabled="frames.length === 0"
+          >
+            <template #icon>
+              <FileTextOutlined />
+            </template>
+            开始OCR识别
+          </a-button>
+          <a-button 
+            v-if="ocrStats.database_records_count > 0"
+            @click="viewOCRResults"
+            :loading="ocrLoading"
+          >
+            <template #icon>
+              <EyeOutlined />
+            </template>
+            查看结果
+          </a-button>
+          <a-button 
+            v-if="ocrStats.database_records_count > 0"
+            type="primary" 
+            danger 
+            @click="deleteOCRResults"
+            :loading="ocrDeleting"
+          >
+            <template #icon>
+              <DeleteOutlined />
+            </template>
+            删除OCR结果
+          </a-button>
+        </a-space>
+      </template>
 
+      <div v-if="ocrProcessing" class="ocr-processing">
+        <a-progress 
+          :percent="ocrProgress" 
+          status="active"
+          :show-info="true"
+        />
+        <p style="margin-top: 8px; text-align: center;">正在进行OCR识别，请稍候...</p>
+      </div>
+
+      <div v-else-if="frames.length === 0" class="ocr-empty">
+        <a-empty description="请先提取视频帧，然后进行OCR识别" />
+      </div>
+
+      <div v-else>
+        <a-row :gutter="16">
+          <a-col :span="8">
+            <a-statistic title="总帧数" :value="totalFrames" />
+          </a-col>
+          <a-col :span="8">
+            <a-statistic title="已识别帧数" :value="ocrStats.database_records_count || 0" />
+          </a-col>
+          <a-col :span="8">
+            <a-statistic title="识别进度" :value="ocrProgressPercent" suffix="%" />
+          </a-col>
+        </a-row>
+
+        <!-- OCR配置 -->
+        <a-divider>OCR配置</a-divider>
+        <a-form layout="inline" :model="ocrConfig">
+          <a-form-item label="使用GPU">
+            <a-switch v-model:checked="ocrConfig.use_gpu" />
+          </a-form-item>
+          <a-form-item label="识别语言">
+            <a-select v-model:value="ocrConfig.lang" style="width: 120px;">
+              <a-select-option value="ch">中文</a-select-option>
+              <a-select-option value="en">英文</a-select-option>
+              <a-select-option value="ch_en">中英文</a-select-option>
+            </a-select>
+          </a-form-item>
+        </a-form>
+      </div>
+    </a-card>
+
+    <!-- 阶段关键词分析模块 -->
+    <a-card title="阶段关键词分析" class="stage-analysis-card" style="margin-bottom: 16px;">
+      <template #extra>
+        <a-space>
+          <a-tag v-if="stageConfigs.length > 0" color="blue">
+            {{ stageConfigs.length }} 个阶段配置
+          </a-tag>
+          <a-button 
+            type="primary" 
+            @click="analyzeStageKeywords" 
+            :loading="stageAnalyzing"
+            :disabled="stageConfigs.length === 0 || ocrStats.database_records_count === 0"
+          >
+            <template #icon>
+              <SearchOutlined />
+            </template>
+            分析阶段关键词
+          </a-button>
+          <a-button 
+            v-if="stageAnalysisResults.length > 0"
+            @click="viewStageAnalysisResults"
+          >
+            <template #icon>
+              <EyeOutlined />
+            </template>
+            查看分析结果
+          </a-button>
+        </a-space>
+      </template>
+
+      <div v-if="stageConfigs.length === 0" class="stage-empty">
+        <a-empty description="暂无阶段配置，请先在阶段配置页面创建阶段">
+          <a-button type="primary" @click="goToStageConfig">
+            <template #icon>
+              <SettingOutlined />
+            </template>
+            配置阶段
+          </a-button>
+        </a-empty>
+      </div>
+
+      <div v-else-if="ocrStats.database_records_count === 0" class="stage-no-ocr">
+        <a-empty description="请先完成OCR识别，然后进行阶段关键词分析" />
+      </div>
+
+      <div v-else>
+        <a-row :gutter="16">
+          <a-col :span="8">
+            <a-statistic title="阶段配置数" :value="stageConfigs.length" />
+          </a-col>
+          <a-col :span="8">
+            <a-statistic title="已分析阶段" :value="stageAnalysisResults.length" />
+          </a-col>
+          <a-col :span="8">
+            <a-statistic title="分析状态" :value="stageAnalyzing ? '分析中' : '就绪'" />
+          </a-col>
+        </a-row>
+
+        <!-- 阶段配置列表 -->
+        <a-divider>阶段配置</a-divider>
+        <a-list 
+          :data-source="stageConfigs" 
+          size="small"
+          :pagination="false"
+        >
+          <template #renderItem="{ item }">
+            <a-list-item>
+              <a-list-item-meta
+                :title="`阶段 ${item.stage_order}: ${item.stage_name}`"
+                :description="`关键词: ${item.keywords.join(', ')}`"
+              >
+                <template #avatar>
+                  <a-avatar :style="{ backgroundColor: '#1890ff' }">
+                    {{ item.stage_order }}
+                  </a-avatar>
+                </template>
+              </a-list-item-meta>
+            </a-list-item>
+          </template>
+        </a-list>
+      </div>
+    </a-card>
 
     <!-- 视频帧列表 -->
     <a-card title="视频帧列表" class="frames-list-card">
@@ -103,6 +270,16 @@
                     >
                       <template #icon>
                         <DownloadOutlined />
+                      </template>
+                    </a-button>
+                    <a-button 
+                      type="default" 
+                      size="small" 
+                      @click="viewFrameOCR(frame)"
+                      title="查看OCR结果"
+                    >
+                      <template #icon>
+                        <FileTextOutlined />
                       </template>
                     </a-button>
                   </a-button-group>
@@ -212,6 +389,274 @@
         </a-form-item>
       </a-form>
     </a-modal>
+
+    <!-- OCR结果查看模态框 -->
+    <a-modal
+      v-model:open="ocrResultsVisible"
+      title="OCR识别结果"
+      :footer="null"
+      width="90%"
+      centered
+    >
+      <div v-if="ocrLoading" class="loading-container">
+        <a-spin size="large" />
+        <p>加载OCR结果中...</p>
+      </div>
+      
+      <div v-else-if="ocrResultsData">
+        <!-- 统计信息 -->
+        <a-card size="small" style="margin-bottom: 16px;">
+          <a-row :gutter="16">
+            <a-col :span="6">
+              <a-statistic title="视频ID" :value="ocrResultsData.stats.video_id" />
+            </a-col>
+            <a-col :span="6">
+              <a-statistic title="数据库记录" :value="ocrResultsData.stats.database_records_count" />
+            </a-col>
+            <a-col :span="6">
+              <a-statistic title="JSON文件" :value="ocrResultsData.stats.json_files_count" />
+            </a-col>
+            <a-col :span="6">
+              <a-tag :color="ocrResultsData.stats.data_consistency ? 'green' : 'red'">
+                数据一致性: {{ ocrResultsData.stats.data_consistency ? '正常' : '异常' }}
+              </a-tag>
+            </a-col>
+          </a-row>
+        </a-card>
+
+        <!-- 结果选项卡 -->
+        <a-tabs v-model:activeKey="ocrResultsTab">
+          <a-tab-pane key="database" tab="数据库结果">
+            <div v-if="ocrResultsData.database_results.length === 0">
+              <a-empty description="暂无数据库OCR结果" />
+            </div>
+            <div v-else>
+              <a-table 
+                :dataSource="ocrResultsData.database_results" 
+                :columns="databaseColumns"
+                :pagination="{ pageSize: 10 }"
+                size="small"
+                :scroll="{ x: 800 }"
+              >
+                <template #bodyCell="{ column, record }">
+                  <template v-if="column.key === 'text_content'">
+                    <div class="text-content-cell">
+                      <div v-if="Array.isArray(record.text_content) && record.text_content.length > 0">
+                        <a-tag v-for="(text, index) in record.text_content.slice(0, 3)" :key="index" style="margin: 2px;">
+                          {{ text }}
+                        </a-tag>
+                        <span v-if="record.text_content.length > 3">...</span>
+                      </div>
+                      <span v-else class="text-muted">无文本</span>
+                    </div>
+                  </template>
+                  <template v-else-if="column.key === 'confidence'">
+                    <span v-if="record.confidence !== null">{{ (record.confidence * 100).toFixed(1) }}%</span>
+                    <span v-else class="text-muted">-</span>
+                  </template>
+                  <template v-else-if="column.key === 'processed_at'">
+                    {{ formatDate(record.processed_at) }}
+                  </template>
+                </template>
+              </a-table>
+            </div>
+          </a-tab-pane>
+          
+          <a-tab-pane key="json" tab="JSON文件结果">
+            <div v-if="ocrResultsData.json_results.length === 0">
+              <a-empty description="暂无JSON文件OCR结果" />
+            </div>
+            <div v-else>
+              <a-table 
+                :dataSource="ocrResultsData.json_results" 
+                :columns="jsonColumns"
+                :pagination="{ pageSize: 10 }"
+                size="small"
+                :scroll="{ x: 800 }"
+              >
+                <template #bodyCell="{ column, record }">
+                  <template v-if="column.key === 'processing_time'">
+                    {{ record.processing_time }}s
+                  </template>
+                  <template v-else-if="column.key === 'has_raw_result'">
+                    <a-tag :color="record.has_raw_result ? 'green' : 'red'">
+                      {{ record.has_raw_result ? '有' : '无' }}
+                    </a-tag>
+                  </template>
+                </template>
+              </a-table>
+            </div>
+          </a-tab-pane>
+        </a-tabs>
+      </div>
+    </a-modal>
+
+    <!-- 单个帧OCR结果查看模态框 -->
+    <a-modal
+      v-model:open="frameOCRVisible"
+      :title="`帧 ${selectedFrameForOCR?.frame_number} OCR识别结果`"
+      :footer="null"
+      width="80%"
+      centered
+    >
+      <div v-if="frameOCRLoading" class="loading-container">
+        <a-spin size="large" />
+        <p>加载OCR结果中...</p>
+      </div>
+      
+      <div v-else-if="frameOCRData">
+        <!-- 帧信息 -->
+        <a-card size="small" style="margin-bottom: 16px;">
+          <a-row :gutter="16">
+            <a-col :span="6">
+              <a-statistic title="帧ID" :value="frameOCRData.frame_id" />
+            </a-col>
+            <a-col :span="6">
+              <a-statistic title="帧号" :value="selectedFrameForOCR?.frame_number" />
+            </a-col>
+            <a-col :span="6">
+              <a-statistic title="时间戳" :value="formatTimestamp(selectedFrameForOCR?.timestamp_ms)" />
+            </a-col>
+            <a-col :span="6">
+              <div v-if="frameOCRData.confidence">
+                <a-statistic title="置信度" :value="formatConfidence(frameOCRData.confidence)" />
+              </div>
+            </a-col>
+          </a-row>
+        </a-card>
+
+        <!-- OCR识别文本 -->
+        <a-card title="识别文本" size="small" style="margin-bottom: 16px;">
+          <div v-if="frameOCRData.text_content">
+            <div v-if="Array.isArray(frameOCRData.text_content) && frameOCRData.text_content.length > 0">
+              <a-space direction="vertical" style="width: 100%;">
+                <a-tag 
+                  v-for="(text, index) in frameOCRData.text_content" 
+                  :key="index" 
+                  color="blue"
+                  style="margin: 4px; padding: 8px; font-size: 14px;"
+                >
+                  {{ text }}
+                </a-tag>
+              </a-space>
+            </div>
+            <div v-else>
+              <p>{{ frameOCRData.text_content }}</p>
+            </div>
+          </div>
+          <div v-else>
+            <a-empty description="该帧未识别到文本" />
+          </div>
+        </a-card>
+
+        <!-- 边界框信息 -->
+        <a-card title="边界框信息" size="small" v-if="frameOCRData.bbox">
+          <pre style="background: #f5f5f5; padding: 12px; border-radius: 4px; overflow-x: auto;">{{ frameOCRData.bbox }}</pre>
+        </a-card>
+
+        <!-- 处理时间 -->
+        <div v-if="frameOCRData.processed_at" style="margin-top: 16px; text-align: center; color: #666;">
+          <small>处理时间: {{ formatDate(frameOCRData.processed_at) }}</small>
+        </div>
+      </div>
+    </a-modal>
+
+    <!-- 阶段分析结果模态框 -->
+    <a-modal
+      v-model:open="stageAnalysisVisible"
+      title="阶段关键词分析结果"
+      :footer="null"
+      width="90%"
+      centered
+    >
+      <div v-if="stageAnalysisLoading" class="loading-container">
+        <a-spin size="large" />
+        <p>加载分析结果中...</p>
+      </div>
+      
+      <div v-else-if="stageAnalysisData">
+        <!-- 分析摘要 -->
+        <a-card size="small" style="margin-bottom: 16px;">
+          <a-row :gutter="16">
+            <a-col :span="6">
+              <a-statistic title="视频ID" :value="stageAnalysisData?.video_id || '-'" />
+            </a-col>
+            <a-col :span="6">
+              <a-statistic title="总阶段数" :value="stageAnalysisData?.total_stages || 0" />
+            </a-col>
+            <a-col :span="6">
+              <a-statistic title="分析时间" :value="stageAnalysisData?.analysis_timestamp ? formatDate(stageAnalysisData.analysis_timestamp) : '-'" />
+            </a-col>
+            <a-col :span="6">
+              <a-tag color="green">分析完成</a-tag>
+            </a-col>
+          </a-row>
+        </a-card>
+
+        <!-- 阶段分析结果 -->
+        <a-collapse v-model:activeKey="activeStageKeys" ghost>
+          <a-collapse-panel 
+            v-for="stage in (stageAnalysisData.stage_analysis_results || [])" 
+            :key="stage.stage_id"
+            :header="`阶段 ${stage.stage_order}: ${stage.stage_name}`"
+          >
+            <template #extra>
+              <a-space>
+                <a-tag color="blue">{{ (stage.keywords || []).length }} 个关键词</a-tag>
+                <a-tag color="green" v-if="(stage.keyword_analysis || []).length > 0">
+                  {{ (stage.keyword_analysis || []).filter(k => (k.appearances || []).length > 0).length }} 个找到
+                </a-tag>
+              </a-space>
+            </template>
+            
+            <!-- 关键词分析结果 -->
+            <a-table 
+              :dataSource="stage.keyword_analysis || []" 
+              :columns="keywordAnalysisColumns"
+              :pagination="false"
+              size="small"
+            >
+              <template #bodyCell="{ column, record }">
+                <template v-if="column.key === 'keyword'">
+                  <a-tag color="blue">{{ record.keyword }}</a-tag>
+                </template>
+                <template v-else-if="column.key === 'found'">
+                  <a-tag :color="(record.total_occurrences || 0) > 0 ? 'green' : 'red'">
+                    {{ (record.total_occurrences || 0) > 0 ? '是' : '否' }}
+                  </a-tag>
+                </template>
+                <template v-else-if="column.key === 'appearances_count'">
+                  <a-tag color="blue">
+                    {{ record.total_occurrences || 0 }}
+                  </a-tag>
+                </template>
+                <template v-else-if="column.key === 'first_appearance'">
+                  <span v-if="record.first_appearance_timestamp">
+                    {{ formatTimestamp(record.first_appearance_timestamp) }}
+                  </span>
+                  <span v-else class="text-muted">-</span>
+                </template>
+                <template v-else-if="column.key === 'last_disappearance'">
+                  <span v-if="record.first_disappearance_timestamp">
+                    {{ formatTimestamp(record.first_disappearance_timestamp) }}
+                  </span>
+                  <span v-else class="text-muted">-</span>
+                </template>
+                <template v-else-if="column.key === 'actions'">
+                  <a-button 
+                    v-if="(record.total_occurrences || 0) > 0" 
+                    size="small" 
+                    @click="viewKeywordDetails(record)"
+                  >
+                    查看详情
+                  </a-button>
+                </template>
+              </template>
+            </a-table>
+          </a-collapse-panel>
+        </a-collapse>
+      </div>
+    </a-modal>
   </div>
 </template>
 
@@ -224,9 +669,12 @@ import {
   ScissorOutlined,
   DeleteOutlined,
   EyeOutlined,
-  DownloadOutlined
+  DownloadOutlined,
+  FileTextOutlined,
+  SearchOutlined,
+  SettingOutlined
 } from '@ant-design/icons-vue'
-import { videoApi } from '../api'
+import { videoApi, ocrApi, stageConfigApi } from '../api'
 
 // 路由参数
 const route = useRoute()
@@ -262,6 +710,73 @@ const extractForm = reactive({
   quality: 85,
   maxFrames: 100
 })
+
+// OCR相关
+const ocrProcessing = ref(false)
+const ocrLoading = ref(false)
+const ocrDeleting = ref(false)
+const ocrProgress = ref(0)
+const ocrStats = ref({
+  database_records_count: 0,
+  json_files_count: 0,
+  data_consistency: false
+})
+const ocrConfig = reactive({
+  use_gpu: false,
+  lang: 'ch'
+})
+const ocrResultsVisible = ref(false)
+const ocrResultsData = ref(null)
+const ocrResultsTab = ref('database')
+
+// 单个帧OCR结果相关
+const frameOCRVisible = ref(false)
+const frameOCRLoading = ref(false)
+const frameOCRData = ref(null)
+const selectedFrameForOCR = ref(null)
+
+// 阶段分析相关
+const stageAnalysisLoading = ref(false)
+const stageAnalysisVisible = ref(false)
+const stageAnalysisData = ref(null)
+const activeStageKeys = ref([])
+const stageConfigs = ref([])
+const stageAnalyzing = ref(false)
+const stageAnalysisResults = ref([])
+
+// OCR计算属性
+const ocrProgressPercent = computed(() => {
+  if (totalFrames.value === 0) return 0
+  return Math.round((ocrStats.value.database_records_count / totalFrames.value) * 100)
+})
+
+// OCR表格列定义
+const databaseColumns = [
+  { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
+  { title: '帧ID', dataIndex: 'frame_id', key: 'frame_id', width: 80 },
+  { title: '识别文本', dataIndex: 'text_content', key: 'text_content', width: 300 },
+  { title: '置信度', dataIndex: 'confidence', key: 'confidence', width: 100 },
+  { title: '处理时间', dataIndex: 'processed_at', key: 'processed_at', width: 150 }
+]
+
+const jsonColumns = [
+  { title: '帧ID', dataIndex: 'frame_id', key: 'frame_id', width: 80 },
+  { title: '帧路径', dataIndex: 'frame_path', key: 'frame_path', width: 200 },
+  { title: 'OCR版本', dataIndex: 'ocr_version', key: 'ocr_version', width: 100 },
+  { title: '处理时间', dataIndex: 'processing_time', key: 'processing_time', width: 100 },
+  { title: '文本块数量', dataIndex: 'text_blocks_count', key: 'text_blocks_count', width: 100 },
+  { title: '原始结果', dataIndex: 'has_raw_result', key: 'has_raw_result', width: 100 }
+]
+
+// 关键词分析表格列定义
+const keywordAnalysisColumns = [
+  { title: '关键词', dataIndex: 'keyword', key: 'keyword', width: 120 },
+  { title: '状态', dataIndex: 'found', key: 'found', width: 80 },
+  { title: '出现次数', dataIndex: 'appearances_count', key: 'appearances_count', width: 100 },
+  { title: '首次出现', dataIndex: 'first_appearance', key: 'first_appearance', width: 120 },
+  { title: '最后消失', dataIndex: 'last_disappearance', key: 'last_disappearance', width: 120 },
+  { title: '操作', dataIndex: 'actions', key: 'actions', width: 100 }
+]
 
 // 工具函数
 const formatFileSize = (bytes) => {
@@ -359,7 +874,8 @@ const getVideoFrames = async () => {
 const refreshData = async () => {
   await Promise.all([
     getVideoInfo(),
-    getVideoFrames()
+    getVideoFrames(),
+    getOCRStats()
   ])
   message.success('数据刷新成功')
 }
@@ -463,9 +979,195 @@ const goBack = () => {
   router.push(`/project/${projectId}/videos`)
 }
 
+// OCR相关方法
+const getOCRStats = async () => {
+  try {
+    const data = await ocrApi.viewOCRResults(videoId)
+    ocrStats.value = {
+      database_records_count: data.stats?.database_records_count || 0,
+      json_files_count: data.stats?.json_files_count || 0,
+      data_consistency: data.stats?.data_consistency || false
+    }
+  } catch (error) {
+    console.error('获取OCR统计信息失败:', error)
+    // 不显示错误消息，因为可能是还没有OCR结果
+  }
+}
+
+const startOCRProcessing = async () => {
+  try {
+    ocrProcessing.value = true
+    ocrProgress.value = 0
+    
+    const response = await ocrApi.processVideoOCR(videoId, ocrConfig)
+    message.success('OCR识别已开始')
+    
+    // 开始轮询进度
+    const pollProgress = setInterval(async () => {
+      try {
+        await getOCRStats()
+        if (ocrStats.value.database_records_count >= totalFrames.value) {
+          clearInterval(pollProgress)
+          ocrProcessing.value = false
+          message.success('OCR识别完成')
+        }
+      } catch (error) {
+        console.error('轮询OCR进度失败:', error)
+      }
+    }, 2000)
+    
+    // 设置超时
+    setTimeout(() => {
+      clearInterval(pollProgress)
+      ocrProcessing.value = false
+    }, 300000) // 5分钟超时
+    
+  } catch (error) {
+    console.error('启动OCR识别失败:', error)
+    message.error(`启动OCR识别失败: ${error.message}`)
+    ocrProcessing.value = false
+  }
+}
+
+const viewOCRResults = async () => {
+  try {
+    ocrLoading.value = true
+    ocrResultsVisible.value = true
+    
+    const data = await ocrApi.viewOCRResults(videoId)
+    ocrResultsData.value = data
+    
+  } catch (error) {
+    console.error('获取OCR结果失败:', error)
+    message.error('获取OCR结果失败')
+    ocrResultsVisible.value = false
+  } finally {
+    ocrLoading.value = false
+  }
+}
+
+const deleteOCRResults = () => {
+  Modal.confirm({
+    title: '确认删除',
+    content: '确定要删除所有OCR识别结果吗？此操作不可恢复。',
+    okText: '确定',
+    cancelText: '取消',
+    onOk: async () => {
+      try {
+        ocrDeleting.value = true
+        await ocrApi.deleteVideoOCRResults(videoId)
+        message.success('OCR结果删除成功')
+        await getOCRStats()
+      } catch (error) {
+        console.error('删除OCR结果失败:', error)
+        message.error('删除OCR结果失败')
+      } finally {
+        ocrDeleting.value = false
+      }
+    }
+  })
+}
+
+// 查看单个帧的OCR结果
+const viewFrameOCR = async (frame) => {
+  try {
+    frameOCRLoading.value = true
+    selectedFrameForOCR.value = frame
+    frameOCRVisible.value = true
+    
+    const data = await ocrApi.getFrameOCRResult(frame.id)
+    frameOCRData.value = data
+    
+  } catch (error) {
+    console.error('获取帧OCR结果失败:', error)
+    if (error.response?.status === 404) {
+      message.warning('该帧还没有OCR识别结果，请先进行OCR识别')
+    } else {
+      message.error('获取帧OCR结果失败')
+    }
+    frameOCRVisible.value = false
+  } finally {
+    frameOCRLoading.value = false
+  }
+}
+
+const formatTextContent = (textContent) => {
+  if (!textContent) return '-'
+  if (Array.isArray(textContent)) {
+    return textContent.join(', ')
+  }
+  return textContent
+}
+
+// 格式化置信度
+const formatConfidence = (confidence) => {
+  if (confidence === null || confidence === undefined) return '-'
+  return `${(confidence * 100).toFixed(1)}%`
+}
+
+const formatProcessingTime = (processingTime) => {
+  if (!processingTime) return '-'
+  return `${processingTime.toFixed(3)}s`
+}
+
+// 阶段分析相关方法
+const getStageConfigs = async () => {
+  try {
+    const data = await stageConfigApi.getVideoStageConfigs(videoId)
+    stageConfigs.value = data
+  } catch (error) {
+    console.error('获取阶段配置失败:', error)
+  }
+}
+
+const analyzeStageKeywords = async () => {
+  try {
+    stageAnalyzing.value = true
+    stageAnalysisLoading.value = true
+    const data = await ocrApi.analyzeStageKeywords(videoId)
+    stageAnalysisData.value = data
+    stageAnalysisResults.value = data.stage_analysis_results || []
+    stageAnalysisVisible.value = true
+    // 默认展开第一个阶段
+    if (data.stage_analysis_results && data.stage_analysis_results.length > 0) {
+      activeStageKeys.value = [data.stage_analysis_results[0].stage_id]
+    }
+    message.success('阶段关键词分析完成')
+  } catch (error) {
+    console.error('阶段关键词分析失败:', error)
+    if (error.response?.status === 404) {
+      message.warning('未找到阶段配置或OCR结果，请先配置阶段并完成OCR识别')
+    } else {
+      message.error('阶段关键词分析失败')
+    }
+  } finally {
+    stageAnalyzing.value = false
+    stageAnalysisLoading.value = false
+  }
+}
+
+const viewStageAnalysisResults = () => {
+  if (stageAnalysisData.value) {
+    stageAnalysisVisible.value = true
+  } else {
+    message.warning('暂无分析结果，请先进行阶段关键词分析')
+  }
+}
+
+const viewKeywordDetails = (keywordRecord) => {
+  // 可以在这里实现查看关键词详细信息的功能
+  console.log('查看关键词详情:', keywordRecord)
+  message.info('关键词详情功能待实现')
+}
+
+const goToStageConfig = () => {
+  router.push(`/project/${projectId}/video/${videoId}/stages`)
+}
+
 // 组件挂载时获取数据
 onMounted(() => {
   refreshData()
+  getStageConfigs()
 })
 </script>
 
@@ -473,7 +1175,9 @@ onMounted(() => {
 .video-detail-container {
   padding: 0;
   background-color: #f0f2f5;
-  min-height: 100vh;
+  min-height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
 }
 
 .site-page-header {
@@ -490,8 +1194,10 @@ onMounted(() => {
   border-radius: 0;
   box-shadow: none;
   width: 100%;
-  height: calc(100vh - 80px);
+  flex: 1;
   margin: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .loading-container {
@@ -622,6 +1328,18 @@ onMounted(() => {
   /* overflow: auto; */
 }
 
+.pagination-container {
+  margin-top: auto;
+  padding: 16px 24px;
+  background-color: white;
+  border-top: 1px solid #f0f0f0;
+  display: flex;
+  justify-content: center;
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+}
+
 @media (max-width: 768px) {
   .frame-preview {
     flex-direction: column;
@@ -629,6 +1347,10 @@ onMounted(() => {
   
   .preview-info {
     flex: none;
+  }
+  
+  .app-content {
+    margin-left: 0;
   }
 }
 </style>
